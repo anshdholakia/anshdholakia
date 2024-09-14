@@ -1,4 +1,4 @@
-### Hi! My name is Ansh Dholakia 👋
+### Hi! My name is Ansh 👋 I am a Software Developer & graduate from Drexel University! My primary interests lie in system designs concepts, competitive programming, and applications of tech in general.
 
 <p align="center">
  

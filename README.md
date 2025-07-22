@@ -1,4 +1,6 @@
-### Hi! My name is Ansh 👋 I am a Software Developer & graduate from Drexel University! My primary interests lie in system designs concepts, competitive programming, and applications of tech in general.
+### Hi! My name is Ansh 👋 I am a Software Developer @ Google & CS grad from Drexel University! I worked at Amazon Robotics and interned with Susquehanna International Group. 
+
+#### Buy me a coffee: https://coff.ee/anshdholakia
 
 <p align="center">
  

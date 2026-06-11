@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Chat</title>
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #171a21;
+        --panel-2: #1f242d;
+        --border: #2a313c;
+        --text: #e6e9ef;
+        --muted: #8b94a3;
+        --user: #2b6cb0;
+        --agent: #2f855a;
+        --accent: #6c8cff;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 15px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        height: 100vh;
+        display: flex;
+      }
+      aside {
+        width: 240px;
+        background: var(--panel);
+        border-right: 1px solid var(--border);
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      aside h1 { font-size: 16px; margin: 0 0 4px; }
+      label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+      input, button {
+        width: 100%;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--panel-2);
+        color: var(--text);
+        font: inherit;
+      }
+      button { cursor: pointer; background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+      button.secondary { background: var(--panel-2); border-color: var(--border); color: var(--text); }
+      .members { font-size: 13px; }
+      .members .m { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; }
+      .dot.user { background: var(--user); }
+      .dot.agent { background: var(--agent); }
+      main { flex: 1; display: flex; flex-direction: column; }
+      header {
+        padding: 12px 20px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      #status { font-size: 12px; color: var(--muted); }
+      #log { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+      .msg { max-width: 72%; }
+      .msg .meta { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+      .msg .bubble {
+        padding: 9px 12px;
+        border-radius: 12px;
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+      .msg.user { align-self: flex-end; text-align: right; }
+      .msg.user .bubble { background: var(--user); border-color: var(--user); }
+      .msg.agent .bubble { background: var(--panel-2); border-left: 3px solid var(--agent); }
+      .msg.system { align-self: center; }
+      .msg.system .bubble { background: transparent; border: none; color: var(--muted); font-size: 12px; }
+      form { display: flex; gap: 10px; padding: 16px 20px; border-top: 1px solid var(--border); }
+      form input { flex: 1; }
+      form button { width: auto; padding: 8px 18px; }
+    </style>
+  </head>
+  <body>
+    <aside>
+      <div>
+        <h1>Agent Chat</h1>
+        <div id="status">disconnected</div>
+      </div>
+      <div>
+        <label for="name">Your name</label>
+        <input id="name" value="ansh" />
+        <label for="room" style="margin-top: 10px">Room</label>
+        <input id="room" value="general" />
+        <button id="connect" style="margin-top: 10px">Join room</button>
+        <button id="disconnect" class="secondary" style="margin-top: 8px; display: none">Leave</button>
+      </div>
+      <div>
+        <label>In this room</label>
+        <div class="members" id="members"></div>
+      </div>
+    </aside>
+
+    <main>
+      <header>
+        <strong id="roomTitle">#general</strong>
+      </header>
+      <div id="log"></div>
+      <form id="composer">
+        <input id="text" placeholder="Message the room…" autocomplete="off" disabled />
+        <button disabled>Send</button>
+      </form>
+    </main>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      let ws = null;
+      let me = null;
+
+      function setConnected(on) {
+        $('status').textContent = on ? 'connected' : 'disconnected';
+        $('connect').style.display = on ? 'none' : 'block';
+        $('disconnect').style.display = on ? 'block' : 'none';
+        $('text').disabled = !on;
+        $('composer').querySelector('button').disabled = !on;
+        $('name').disabled = on;
+        $('room').disabled = on;
+      }
+
+      function addMsg({ role, from, text, system }) {
+        const el = document.createElement('div');
+        el.className = 'msg ' + (system ? 'system' : role || 'agent');
+        if (system) {
+          el.innerHTML = `<div class="bubble">${escapeHtml(text)}</div>`;
+        } else {
+          el.innerHTML =
+            `<div class="meta">${escapeHtml(from)} · ${role}</div>` +
+            `<div class="bubble">${escapeHtml(text)}</div>`;
+        }
+        $('log').appendChild(el);
+        $('log').scrollTop = $('log').scrollHeight;
+      }
+
+      function renderMembers(members) {
+        $('members').innerHTML = members
+          .map((m) => `<div class="m"><span class="dot ${m.role}"></span>${escapeHtml(m.name)}</div>`)
+          .join('');
+      }
+
+      function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, (c) =>
+          ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
+        );
+      }
+
+      $('connect').onclick = () => {
+        const name = $('name').value.trim() || 'guest';
+        const room = $('room').value.trim() || 'general';
+        $('roomTitle').textContent = '#' + room;
+        $('log').innerHTML = '';
+
+        const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+        ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+        ws.onopen = () => ws.send(JSON.stringify({ type: 'join', room, as: 'user', name }));
+        ws.onclose = () => { setConnected(false); addMsg({ system: true, text: 'disconnected' }); };
+        ws.onmessage = (e) => {
+          const evt = JSON.parse(e.data);
+          if (evt.type === 'joined') {
+            me = evt.you;
+            setConnected(true);
+            renderMembers(evt.members);
+            (evt.history || []).forEach((m) => addMsg(m));
+            addMsg({ system: true, text: `joined #${evt.room} as ${me.name}` });
+          } else if (evt.type === 'message') {
+            addMsg(evt);
+          } else if (evt.type === 'presence') {
+            renderMembers(evt.members);
+          } else if (evt.type === 'error') {
+            addMsg({ system: true, text: 'error: ' + evt.error });
+          }
+        };
+      };
+
+      $('disconnect').onclick = () => ws && ws.close();
+
+      $('composer').onsubmit = (e) => {
+        e.preventDefault();
+        const text = $('text').value.trim();
+        if (!text || !ws) return;
+        ws.send(JSON.stringify({ type: 'message', text }));
+        $('text').value = '';
+      };
+    </script>
+  </body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "agent-chat-proxy",
+  "version": "0.1.0",
+  "description": "WebSocket proxy hub that lets multiple agents join a chat room, receive every message, and reply.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  }
+}

@@ -93,7 +93,7 @@ class GoogleChatClient(ChatClient):
             body["thread"] = {"threadKey": thread_key}
             params["messageReplyOption"] = "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
         resp = self._session.post(url, params=params, json=body, timeout=30)
-        resp.raise_for_status()
+        _check(resp)
         name = resp.json().get("name")
         if name:
             self._own_messages.add(name)
@@ -106,7 +106,7 @@ class GoogleChatClient(ChatClient):
         resp = self._requests.post(
             self._webhook_url, params=params, json=body, timeout=30
         )
-        resp.raise_for_status()
+        _check(resp)
 
     # ------------------------------------------------------------------ read
     def wait_for_reply(self, timeout: float, poll_interval: float) -> Optional[Reply]:
@@ -160,7 +160,7 @@ class GoogleChatClient(ChatClient):
             "pageSize": 50,
         }
         resp = self._session.get(url, params=params, timeout=30)
-        resp.raise_for_status()
+        _check(resp)
         candidates: List[Tuple[float, str, str, str]] = []
         for msg in resp.json().get("messages", []):
             name = msg.get("name", "")
@@ -186,7 +186,7 @@ class GoogleChatClient(ChatClient):
 
     def _get_message_text(self, name: str) -> str:
         resp = self._session.get(f"{API_ROOT}/{name}", timeout=30)
-        resp.raise_for_status()
+        _check(resp)
         msg = resp.json()
         return msg.get("text") or msg.get("argumentText") or ""
 
@@ -205,6 +205,29 @@ class GoogleChatClient(ChatClient):
 
     def close(self) -> None:  # pragma: no cover
         self._session.close()
+
+
+def _check(resp) -> None:
+    """raise_for_status, but include the API's error body — which carries the
+    actual reason (API not enabled, missing scope, no permission, ...)."""
+    if resp.status_code < 400:
+        return
+    body = (resp.text or "").strip()
+    hint = ""
+    if resp.status_code == 403:
+        hint = (
+            "\nHINT: 403 usually means one of:\n"
+            "  • the Google Chat API isn't enabled on your quota project, or\n"
+            "  • your ADC login has no quota project set, or\n"
+            "  • your account lacks access to that space/DM.\n"
+            "Fix the first two with:\n"
+            "  gcloud services enable chat.googleapis.com --project <PROJECT_ID>\n"
+            "  gcloud auth application-default set-quota-project <PROJECT_ID>"
+        )
+    raise RuntimeError(
+        f"Google Chat API {resp.status_code} for {resp.request.method} "
+        f"{resp.url}\n{body}{hint}"
+    )
 
 
 def _make_session(g):
@@ -263,7 +286,7 @@ def list_spaces(config) -> List[Tuple[str, str, str]]:
         if page:
             params["pageToken"] = page
         resp = session.get(f"{API_ROOT}/spaces", params=params, timeout=30)
-        resp.raise_for_status()
+        _check(resp)
         data = resp.json()
         for s in data.get("spaces", []):
             out.append(

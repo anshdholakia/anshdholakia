@@ -1,0 +1,40 @@
+# kg-agent-supervisor configuration.
+# Copy to config.yaml and edit. Secrets are better set via env vars (see README).
+
+graph_file: examples/sample_graph.json
+
+chat:
+  # mock | webhook | google_chat
+  #   mock         -> fake bot, no credentials, great for a first run
+  #   webhook      -> post via a Google Chat incoming webhook (send-only)
+  #   google_chat  -> full REST API; can post AND read the bot's replies
+  transport: mock
+
+  mock:
+    fail_every: 4          # pretend to hang on every Nth message (0 = never)
+    latency_seconds: 0.3
+
+  webhook:
+    # Set via env: KGS__CHAT__WEBHOOK__URL
+    url: null
+    interactive: true      # ask you to paste the bot's reply on the console
+
+  google:
+    # Set via env: KGS__CHAT__GOOGLE__SPACE / __CREDENTIALS_FILE
+    space: null            # "spaces/AAAAxxxxxxx"
+    credentials_file: null # path to service-account JSON key
+
+recovery:
+  restart_command: "/restart"     # message that makes your agent restart/reset
+  restart_grace_seconds: 10       # wait after restart before re-priming context
+  max_attempts: 4                 # recovery tries per task before giving up
+  backoff_base_seconds: 5         # exponential backoff base between attempts
+  backoff_max_seconds: 120
+  failure_phrases: []             # extra "it died" phrases; empty = sane defaults
+
+run:
+  response_timeout: 120           # seconds to wait for a reply before calling it hung
+  poll_interval: 3                # how often to poll the Chat API for new replies
+  inter_node_delay: 2             # pause between tasks
+  thread_key: null                # set a string to keep the whole run in one thread
+  state_file: .kgs_state.json     # progress file (resume support)

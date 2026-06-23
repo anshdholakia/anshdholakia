@@ -1,0 +1,8 @@
+# Core (config files). The mock transport works with just this.
+pyyaml>=6.0
+
+# Needed for the webhook and google_chat transports.
+requests>=2.31
+
+# Needed only for the google_chat transport (service-account auth).
+google-auth>=2.28

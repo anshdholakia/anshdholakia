@@ -1,0 +1,27 @@
+{
+  "title": "Competitor research brief",
+  "nodes": [
+    {
+      "id": "gather_sources",
+      "prompt": "Identify our 3 most relevant competitors in the knowledge-graph space and list each one's most recent product release with a date.",
+      "depends_on": [],
+      "done_when": "you have 3 competitors, each with a release name and date"
+    },
+    {
+      "id": "summarize_features",
+      "prompt": "For each competitor and release above, summarize the 2-3 headline features in one sentence each.",
+      "depends_on": ["gather_sources"]
+    },
+    {
+      "id": "gap_analysis",
+      "prompt": "Compare those features against our current roadmap and call out the top 3 gaps we should close, ranked by impact.",
+      "depends_on": ["summarize_features"]
+    },
+    {
+      "id": "exec_summary",
+      "prompt": "Write a 5-bullet executive summary of the gap analysis suitable for a leadership review.",
+      "depends_on": ["gap_analysis"],
+      "done_when": "there is a 5-bullet summary"
+    }
+  ]
+}

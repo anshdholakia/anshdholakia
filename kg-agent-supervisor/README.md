@@ -126,6 +126,9 @@ hands-off hang-detection, use Option 2.
 ### Option 2 — `google_chat` (full REST API: post **and** read replies)
 
 This lets the supervisor read the bot's replies itself and auto-detect hangs.
+It is also **edit-aware**: if your agent streams its answer by editing one
+message until it's done, the supervisor watches that message and only accepts it
+once the edits settle (or a final marker appears) — see below.
 
 1. In a Google Cloud project, **enable the Google Chat API**.
 2. Create a **service account** + JSON key.
@@ -135,14 +138,61 @@ This lets the supervisor read the bot's replies itself and auto-detect hangs.
    ```bash
    export KGS__CHAT__GOOGLE__SPACE="spaces/AAAAxxxxxxx"
    export KGS__CHAT__GOOGLE__CREDENTIALS_FILE="/path/to/service-account.json"
+   export KGS__CHAT__GOOGLE__BOT_NAME="Gemini Agent"   # so we read only its replies
    ```
 6. Run:
    ```bash
    python3 -m kgsupervisor --config config.yaml --transport google_chat
    ```
 
-> The client only treats messages from **other** senders as the bot's replies,
-> filtering out its own posts via the service-account email.
+> The client filters out its own posts and (with `bot_name` set) only treats
+> your agent's messages as replies.
+
+**Keep using your webhook to post (hybrid).** If you'd rather post through the
+incoming webhook you already created but still read replies via the API, set
+`chat.google.webhook_url` (or `KGS__CHAT__GOOGLE__WEBHOOK_URL`). Set `bot_name`
+too so the supervisor never reads its own prompts back.
+
+### Your agent streams by editing one message
+
+Because your agent edits a single Chat message repeatedly until the final
+answer, "read the latest message" would grab a half-written reply. The
+`google_chat` transport handles this (`chat.google`):
+
+- `track_edits: true` — watch the agent's message and accept it only once its
+  edits have been quiet for `stability_seconds` (default 8s).
+- `final_marker` — **the robust option.** If you have your agent append a
+  sentinel to its finished message (e.g. `[[END]]` or `✅ done`), set
+  `final_marker: "[[END]]"` and the reply is accepted the instant that marker
+  appears, regardless of further edits.
+- If edits never settle / the marker never appears before `run.response_timeout`,
+  that's treated as a **hang** and recovery kicks in.
+
+### Restarting a dead agent (SSH + systemctl)
+
+When your agent dies it goes silent, so posting `/restart` in chat won't reach
+it — you normally SSH into the cloudtop and `systemctl restart`. Configure that
+under `recovery.restart`:
+
+```yaml
+recovery:
+  restart:
+    method: shell        # chat | shell | both  (shell is reliable when it's dead)
+    shell_command: "ssh cloudtop -- sudo systemctl restart my-agent.service"
+    readiness:
+      command: "ssh cloudtop -- systemctl is-active --quiet my-agent.service"
+      timeout_seconds: 120
+      poll_interval: 5
+```
+
+On recovery the supervisor runs `shell_command`, then polls the `readiness`
+command until it exits 0 (agent healthy), then replays the conversation recap
+and resumes the task. Use `method: both` to run the systemctl restart *and* send
+the chat `/restart`. Secrets/commands can also come from env vars, e.g.
+`KGS__RECOVERY__RESTART__SHELL_COMMAND`.
+
+> The shell command runs through your local shell, so your normal SSH config /
+> keys / `gcert` session to the cloudtop must already work from the terminal.
 
 ---
 
@@ -177,9 +227,15 @@ All settings live in `config.example.yaml` with comments. Key knobs:
 
 | Setting | What it does |
 |---|---|
-| `recovery.restart_command` | The message that makes your agent restart/reset (e.g. `/restart`). |
+| `recovery.restart.method` | `chat`, `shell`, or `both`. `shell` = run `shell_command` (ssh + systemctl). |
+| `recovery.restart.shell_command` | Command to restart the agent, e.g. `ssh cloudtop -- sudo systemctl restart my-agent.service`. |
+| `recovery.restart.readiness.command` | Shell command that exits 0 when the agent is back; polled after restart. |
 | `recovery.max_attempts` | How many times to try recovering one task before giving up. |
 | `recovery.failure_phrases` | Extra phrases that mean "the bot died". Empty = built-in defaults (`hung up`, `disconnected`, `503`, …). |
+| `chat.google.track_edits` / `stability_seconds` | Wait for a streamed (edited) message to settle before accepting it. |
+| `chat.google.final_marker` | Accept a reply the instant it contains this sentinel. |
+| `chat.google.webhook_url` | Post via your incoming webhook while reading replies via the API. |
+| `chat.google.bot_name` | Only treat this sender's messages as the agent's replies. |
 | `run.response_timeout` | Seconds to wait for a reply before declaring a hang. |
 | `run.thread_key` | Set a string to keep the whole run in one Chat thread. |
 | `run.state_file` | Progress file used to resume after a restart. |
@@ -218,10 +274,14 @@ kg-agent-supervisor/
 
 ## Notes & limitations
 
-- The `webhook` transport cannot read replies; use `google_chat` for fully
-  automatic hang detection.
-- "Restart the server" is expressed as sending `recovery.restart_command` into
-  the space. If your Gemini agent restarts on a different trigger (a slash
-  command, an admin message, etc.), set `restart_command` to that.
+- The `webhook` transport cannot read replies (and therefore can't see your
+  agent's message edits). To read a streamed/edited reply you must use
+  `google_chat` — optionally with `webhook_url` set if you still want to *post*
+  via your webhook.
+- The `shell`/`both` restart runs commands through your local shell, so your SSH
+  access to the cloudtop must already work from the terminal (keys, `gcert`,
+  etc.). The supervisor doesn't manage credentials.
 - Don't commit `config.yaml`, service-account keys, or webhook URLs — the
   `.gitignore` already excludes them.
+- `final_marker` is the most reliable way to know a streamed answer is complete.
+  If you can make your agent end its final message with a sentinel, do it.

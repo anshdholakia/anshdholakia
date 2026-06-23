@@ -13,9 +13,10 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from kgsupervisor.config import Config  # noqa: E402
+from kgsupervisor.config import Config, _from_dict  # noqa: E402
 from kgsupervisor.graph import KnowledgeGraph, Node  # noqa: E402
 from kgsupervisor.health import HealthChecker, Verdict  # noqa: E402
+from kgsupervisor.restart import perform_restart, wait_until_ready  # noqa: E402
 from kgsupervisor.supervisor import Supervisor  # noqa: E402
 
 
@@ -93,6 +94,49 @@ def test_supervisor_completes_with_recovering_mock():
         assert sup.state.is_done("n1")
         assert sup.state.is_done("n2")
         assert sup.state.is_done("n3")
+
+
+def test_nested_config_from_dict():
+    """Nested YAML sections must populate nested dataclasses (regression)."""
+    cfg = _from_dict(
+        Config,
+        {
+            "chat": {"transport": "google_chat", "google": {"bot_name": "Gemini Agent"}},
+            "recovery": {
+                "restart": {
+                    "method": "both",
+                    "shell_command": "echo restarting",
+                    "readiness": {"command": "true", "poll_interval": 1},
+                }
+            },
+        },
+    )
+    assert cfg.chat.transport == "google_chat"
+    assert cfg.chat.google.bot_name == "Gemini Agent"
+    assert cfg.recovery.restart.method == "both"
+    assert cfg.recovery.restart.shell_command == "echo restarting"
+    assert cfg.recovery.restart.readiness.command == "true"
+    assert cfg.recovery.restart.readiness.poll_interval == 1
+
+
+def test_shell_restart_and_readiness_run():
+    """method=shell runs the command; readiness probe waits for exit 0."""
+    calls = []
+
+    class _Client:
+        def post(self, text, thread_key=None):
+            calls.append(text)
+
+    cfg = Config()
+    cfg.recovery.restart.method = "shell"
+    cfg.recovery.restart.shell_command = "exit 0"
+    cfg.recovery.restart.readiness.command = "true"
+    cfg.recovery.restart.readiness.timeout_seconds = 5
+    cfg.recovery.restart.readiness.poll_interval = 0.1
+
+    perform_restart(cfg, _Client(), thread_key=None)
+    assert calls == []  # shell method must NOT post to chat
+    assert wait_until_ready(cfg) is True
 
 
 if __name__ == "__main__":

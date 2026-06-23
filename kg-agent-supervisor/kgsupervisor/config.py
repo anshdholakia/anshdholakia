@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, get_type_hints
 
 
 # --------------------------------------------------------------------- schema
@@ -33,6 +33,22 @@ class WebhookConfig:
 class GoogleConfig:
     space: Optional[str] = None              # "spaces/AAAA…"
     credentials_file: Optional[str] = None   # service-account JSON key
+    # Hybrid posting: if set, prompts are POSTed via this incoming-webhook URL
+    # while replies are still READ via the API. Leave null to post via the API.
+    webhook_url: Optional[str] = None
+    # Only treat messages from this sender as the agent's reply. Match against
+    # the sender display name (substring) or resource name. Strongly recommended
+    # when posting via webhook so we never read our own prompts back.
+    bot_name: Optional[str] = None
+    # Your agent streams by EDITING one message until it's done. When true we
+    # watch that message and only accept it once the edits settle.
+    track_edits: bool = True
+    # Quiet period (seconds) with no further edits that marks a reply "final".
+    stability_seconds: float = 8.0
+    # If your agent appends a sentinel to its finished message (recommended),
+    # set it here and a reply is accepted the instant the marker appears,
+    # regardless of further edits. e.g. "[[END]]" or "✅ done".
+    final_marker: Optional[str] = None
 
 
 @dataclass
@@ -44,10 +60,37 @@ class ChatConfig:
 
 
 @dataclass
+class ReadinessConfig:
+    # Shell command whose exit code 0 means "the agent is back up", e.g.
+    #   "ssh cloudtop -- systemctl is-active --quiet my-agent.service"
+    # If null, we just wait restart_grace_seconds after restarting.
+    command: Optional[str] = None
+    timeout_seconds: float = 120.0   # how long to keep probing before giving up
+    poll_interval: float = 5.0
+
+
+@dataclass
+class RestartConfig:
+    # chat  -> post chat_command into the space (only works if the agent is
+    #          still alive enough to read it)
+    # shell -> run shell_command (e.g. ssh cloudtop + systemctl restart) — the
+    #          reliable path when the agent has gone silent
+    # both  -> shell first, then chat
+    method: str = "chat"
+    chat_command: str = "/restart"
+    # Full shell command run via the OS shell. Typically an SSH into your
+    # cloudtop, e.g.
+    #   "ssh cloudtop -- sudo systemctl restart my-agent.service"
+    shell_command: Optional[str] = None
+    shell_timeout_seconds: float = 60.0
+    readiness: ReadinessConfig = field(default_factory=ReadinessConfig)
+
+
+@dataclass
 class RecoveryConfig:
-    # Message used to ask the bot/server to restart and reset.
-    restart_command: str = "/restart"
-    # Seconds to wait after sending the restart before re-priming context.
+    restart: RestartConfig = field(default_factory=RestartConfig)
+    # Seconds to wait after restart (when there is no readiness probe) before
+    # re-priming context, and how long to wait for the agent to ack the recap.
     restart_grace_seconds: float = 10.0
     # How many times to attempt recovery for a single node before giving up.
     max_attempts: int = 4
@@ -96,13 +139,17 @@ def _read_yaml(path: str) -> dict:
 
 def _from_dict(cls, data: dict):
     """Recursively build a dataclass, ignoring unknown keys."""
+    # ``from __future__ import annotations`` makes f.type a *string*, so resolve
+    # the real types to detect nested dataclasses.
+    hints = get_type_hints(cls)
     kwargs = {}
     for f in fields(cls):
         if f.name not in data:
             continue
         value = data[f.name]
-        if is_dataclass(f.type) and isinstance(value, dict):
-            kwargs[f.name] = _from_dict(f.type, value)
+        ftype = hints.get(f.name, f.type)
+        if is_dataclass(ftype) and isinstance(value, dict):
+            kwargs[f.name] = _from_dict(ftype, value)
         else:
             kwargs[f.name] = value
     return cls(**kwargs)

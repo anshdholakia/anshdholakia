@@ -24,6 +24,7 @@ from .chat import ChatClient, build_chat_client
 from .config import Config
 from .graph import KnowledgeGraph, Node
 from .health import HealthChecker, Verdict
+from .restart import perform_restart, wait_until_ready
 from .state import RunState
 
 log = logging.getLogger("kgs")
@@ -143,15 +144,10 @@ class Supervisor:
         log.info("Recovery: backing off %.0fs before restarting the agent.", delay)
         time.sleep(delay)
 
-        # 2) Ask the bot/server to restart and clear its broken state.
-        log.info("Recovery: sending restart command %r.", rec.restart_command)
-        self.client.post(rec.restart_command, thread_key=self.config.run.thread_key)
-        # Give the agent time to come back up. We don't strictly need its reply,
-        # but draining one keeps the read watermark current.
-        self.client.wait_for_reply(
-            timeout=rec.restart_grace_seconds,
-            poll_interval=self.config.run.poll_interval,
-        )
+        # 2) Restart the agent (chat command and/or systemctl over SSH) and wait
+        #    until it reports healthy before re-priming it.
+        perform_restart(self.config, self.client, self.config.run.thread_key)
+        wait_until_ready(self.config)
 
         # 3) Replay a compact recap so the freshly-restarted agent has context.
         recap = self.session.recap()

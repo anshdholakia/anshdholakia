@@ -1,17 +1,26 @@
-"""Google Chat REST API transport (post messages AND read the bot's replies).
+"""Google Chat REST API transport — edit-aware reading + hybrid posting.
 
-This uses a Google Cloud **service account** authenticated as a Chat app. The
-service account posts into ``chat.space`` and polls ``spaces.messages.list`` for
-new messages authored by anyone *other than* the service account itself — i.e.
-the Gemini bot's replies.
+Your Gemini agent streams its answer by *editing the same message* over and over
+until it's finished. A plain "read the latest message" approach would grab a
+half-written answer. So this transport watches the agent's message and only
+accepts it once:
+
+* it contains ``final_marker`` (if you configured one — the robust option), or
+* its edits have settled for ``stability_seconds`` (no further edits), or
+* edits never settle before the timeout → reported as a hang (``None``).
+
+Auth uses a Google Cloud **service account** acting as a Chat app. Posting can
+go through the API (default) or, if ``chat.google.webhook_url`` is set, through
+an incoming webhook (your existing webhook) while replies are still read via the
+API. Set ``chat.google.bot_name`` so we only treat the agent's messages as
+replies (and never read our own prompts back).
 
 Setup (see README for the click-by-click version):
 
-1. In a Google Cloud project, enable the **Google Chat API**.
-2. Create a service account and a JSON key; point ``GOOGLE_APPLICATION_CREDENTIALS``
-   (or ``chat.google.credentials_file``) at the key.
-3. Configure the Chat app (App configuration page) using that service account.
-4. Add the Chat app to the space, and note the space id ``spaces/AAAA…``.
+1. Enable the **Google Chat API** in a Google Cloud project.
+2. Create a service account + JSON key; point ``credentials_file`` at it.
+3. Configure the Chat app to use that service account and add it to the space.
+4. Note the space id ``spaces/AAAA…``.
 
 Required scope: ``https://www.googleapis.com/auth/chat.bot``.
 """
@@ -19,7 +28,7 @@ Required scope: ``https://www.googleapis.com/auth/chat.bot``.
 from __future__ import annotations
 
 import time
-from typing import List, Optional
+from typing import List, Optional, Set, Tuple
 
 from .base import ChatClient, Reply
 
@@ -32,7 +41,7 @@ class GoogleChatClient(ChatClient):
 
     def __init__(self, config):
         try:
-            import requests  # noqa: F401
+            import requests
             from google.oauth2 import service_account
             from google.auth.transport.requests import AuthorizedSession
         except ImportError as exc:  # pragma: no cover
@@ -54,72 +63,147 @@ class GoogleChatClient(ChatClient):
         )
         self._service_account_email = creds.service_account_email
         self._session = AuthorizedSession(creds)
-        # Only consider messages created after the client starts, so we never
-        # mistake old history for a fresh reply.
+
+        self._requests = requests
+        self._webhook_url = g.webhook_url            # hybrid posting
+        self._bot_name = g.bot_name                  # sender filter
+        self._track_edits = g.track_edits
+        self._stability = float(g.stability_seconds)
+        self._final_marker = g.final_marker
+
+        # Names of messages WE created via the API, so we never read them back.
+        self._own_messages: Set[str] = set()
+        # Only consider messages created after this moment.
         self._last_seen = time.time()
 
     # ------------------------------------------------------------------ post
     def post(self, text: str, thread_key: Optional[str] = None) -> None:
+        if self._webhook_url:
+            self._post_via_webhook(text, thread_key)
+        else:
+            self._post_via_api(text, thread_key)
+        # Anything the agent says from here on is a reply to what we just sent.
+        self._last_seen = time.time()
+
+    def _post_via_api(self, text: str, thread_key: Optional[str]) -> None:
         url = f"{API_ROOT}/{self.space}/messages"
-        params = {}
-        body: dict = {"text": text}
+        params, body = {}, {"text": text}
         if thread_key:
             body["thread"] = {"threadKey": thread_key}
             params["messageReplyOption"] = "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
         resp = self._session.post(url, params=params, json=body, timeout=30)
         resp.raise_for_status()
+        name = resp.json().get("name")
+        if name:
+            self._own_messages.add(name)
+
+    def _post_via_webhook(self, text: str, thread_key: Optional[str]) -> None:
+        params, body = {}, {"text": text}
+        if thread_key:
+            body["thread"] = {"threadKey": thread_key}
+            params["messageReplyOption"] = "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
+        resp = self._requests.post(
+            self._webhook_url, params=params, json=body, timeout=30
+        )
+        resp.raise_for_status()
 
     # ------------------------------------------------------------------ read
     def wait_for_reply(self, timeout: float, poll_interval: float) -> Optional[Reply]:
         deadline = time.time() + timeout
+        target: Optional[Tuple[str, str]] = None  # (message_name, sender_label)
+        last_text = ""
+        last_change = time.time()
+
         while time.time() < deadline:
-            replies = self._fetch_new_bot_messages()
-            if replies:
-                # Advance the watermark past everything we just consumed.
-                self._last_seen = max(r.create_time for r in replies)
-                return replies[-1]  # most recent reply
-            time.sleep(min(poll_interval, max(0.0, deadline - time.time())))
+            if target is None:
+                found = self._find_new_reply_message()
+                if found is None:
+                    self._nap(poll_interval, deadline)
+                    continue
+                name, text, sender = found
+                target = (name, sender)
+                last_text, last_change = text, time.time()
+            else:
+                name, sender = target
+                text = self._get_message_text(name)
+                if text != last_text:
+                    last_text, last_change = text, time.time()
+
+            # Accept conditions -------------------------------------------------
+            if self._final_marker and self._final_marker in last_text:
+                return self._finalize(last_text, target[1])
+            if not self._track_edits and last_text.strip():
+                return self._finalize(last_text, target[1])
+            settled = (time.time() - last_change) >= self._stability
+            if self._track_edits and last_text.strip() and settled:
+                return self._finalize(last_text, target[1])
+
+            self._nap(poll_interval, deadline)
+
+        # Timed out. If a final_marker was required we never got a complete
+        # answer, and a message that never settles means the agent stalled
+        # mid-stream — both are hangs, so report None and let recovery run.
         return None
 
+    def _finalize(self, text: str, sender: str) -> Reply:
+        self._last_seen = time.time()
+        return Reply(text=text, sender=sender, create_time=time.time())
+
     # -------------------------------------------------------------- internals
-    def _fetch_new_bot_messages(self) -> List[Reply]:
+    def _find_new_reply_message(self) -> Optional[Tuple[str, str, str]]:
+        """Return (name, text, sender_label) of the newest agent message, if any."""
         url = f"{API_ROOT}/{self.space}/messages"
-        # RFC3339 timestamp filter keeps the payload small.
-        after = _rfc3339(self._last_seen)
         params = {
-            "filter": f'createTime > "{after}"',
+            "filter": f'createTime > "{_rfc3339(self._last_seen)}"',
             "orderBy": "createTime ASC",
             "pageSize": 50,
         }
         resp = self._session.get(url, params=params, timeout=30)
         resp.raise_for_status()
-        out: List[Reply] = []
+        candidates: List[Tuple[float, str, str, str]] = []
         for msg in resp.json().get("messages", []):
-            sender = msg.get("sender", {})
-            # Skip our own posts; we want the Gemini bot's replies.
-            if sender.get("name", "").endswith(self._service_account_email):
+            name = msg.get("name", "")
+            if name in self._own_messages:
                 continue
-            if sender.get("type") == "HUMAN" and not _treat_humans_as_agent():
-                # By default we listen only to the bot, but a human can step in.
-                pass
-            text = msg.get("text") or msg.get("argumentText") or ""
-            out.append(
-                Reply(
-                    text=text,
-                    sender=sender.get("displayName") or sender.get("name", "unknown"),
-                    create_time=_parse_rfc3339(msg.get("createTime")),
-                    raw=msg,
+            sender = msg.get("sender", {})
+            label = sender.get("displayName") or sender.get("name", "unknown")
+            if not self._is_agent(sender, label):
+                continue
+            candidates.append(
+                (
+                    _parse_rfc3339(msg.get("createTime")),
+                    name,
+                    msg.get("text") or msg.get("argumentText") or "",
+                    label,
                 )
             )
-        return out
+        if not candidates:
+            return None
+        candidates.sort(key=lambda c: c[0])
+        _, name, text, label = candidates[-1]
+        return name, text, label
+
+    def _get_message_text(self, name: str) -> str:
+        resp = self._session.get(f"{API_ROOT}/{name}", timeout=30)
+        resp.raise_for_status()
+        msg = resp.json()
+        return msg.get("text") or msg.get("argumentText") or ""
+
+    def _is_agent(self, sender: dict, label: str) -> bool:
+        # Never treat our own service-account posts as replies.
+        if sender.get("name", "").endswith(self._service_account_email):
+            return False
+        # If a bot_name filter is configured, the sender must match it.
+        if self._bot_name:
+            return self._bot_name in label or self._bot_name in sender.get("name", "")
+        return True
+
+    @staticmethod
+    def _nap(poll_interval: float, deadline: float) -> None:
+        time.sleep(min(poll_interval, max(0.0, deadline - time.time())))
 
     def close(self) -> None:  # pragma: no cover
         self._session.close()
-
-
-def _treat_humans_as_agent() -> bool:
-    # Hook for future config; for now humans in the space are also surfaced.
-    return True
 
 
 def _rfc3339(epoch: float) -> str:

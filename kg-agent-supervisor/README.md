@@ -202,25 +202,28 @@ restarts **only its own** service, so recovering one agent never disturbs the
 other:
 
 ```bash
-# terminal 1 — point env at hulk's space + bot, then:
+# terminal 1 — hulk's space (same service-account key for both agents):
 export KGS__CHAT__GOOGLE__SPACE="spaces/AAAA..." \
-       KGS__CHAT__GOOGLE__CREDENTIALS_FILE="$HOME/sa.json" \
-       KGS__CHAT__GOOGLE__BOT_NAME="<hulk bot name>"
+       KGS__CHAT__GOOGLE__CREDENTIALS_FILE="$HOME/sa.json"
 python3 -m kgsupervisor --config config.hulk.yaml --graph hulk_tasks.json
 
-# terminal 2 — fan5's space + bot:
+# terminal 2 — fan5's space:
 export KGS__CHAT__GOOGLE__SPACE="spaces/BBBB..." \
-       KGS__CHAT__GOOGLE__CREDENTIALS_FILE="$HOME/sa.json" \
-       KGS__CHAT__GOOGLE__BOT_NAME="<fan5 bot name>"
+       KGS__CHAT__GOOGLE__CREDENTIALS_FILE="$HOME/sa.json"
 python3 -m kgsupervisor --config config.fan5.yaml --graph fan5_tasks.json
 ```
 
 Notes for your setup:
 
-- **Set `BOT_NAME`.** If both agents post into the *same* Chat space, the
-  supervisor needs `bot_name` to tell their replies apart (otherwise it might
-  read the other agent's message as its reply). Separate spaces also work — just
-  give each config its own `SPACE`.
+- **Separate spaces (your case): just set each `SPACE`.** hulk and fan5 live in
+  different Chat spaces, so each config points at its own `SPACE` and `BOT_NAME`
+  is optional — the supervisor only reads messages newer than the prompt it just
+  sent and filters out its own posts. (You'd only need `BOT_NAME` if two agents
+  shared one space.)
+- **Auth = one shared Chat app for the orchestrator.** Create a single service
+  account in your existing Cloud project, configure it as a Chat app, and add
+  that app to *both* spaces. Point `CREDENTIALS_FILE` at its JSON key. You do not
+  need a separate project or key per agent.
 - **No final marker (Gemini can't add one).** Detection therefore relies on the
   message edits going quiet for `stability_seconds` (default 12s in these
   configs). If you sometimes accept a half-finished answer, raise

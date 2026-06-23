@@ -36,6 +36,11 @@ def main(argv=None) -> int:
         action="store_true",
         help="Delete the saved progress file before running.",
     )
+    parser.add_argument(
+        "--list-spaces",
+        action="store_true",
+        help="List the spaces/DMs your auth can see (to find a DM's API id), then exit.",
+    )
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--log-file", default=None)
     args = parser.parse_args(argv)
@@ -47,6 +52,9 @@ def main(argv=None) -> int:
         config.graph_file = args.graph
     if args.transport:
         config.chat.transport = args.transport
+
+    if args.list_spaces:
+        return _list_spaces(config)
 
     if args.reset:
         state_path = Path(config.run.state_file)
@@ -61,6 +69,24 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         print("\nInterrupted. Progress is saved; re-run to resume.", file=sys.stderr)
         return 130
+    return 0
+
+
+def _list_spaces(config) -> int:
+    if config.chat.transport != "google_chat":
+        print("--list-spaces needs chat.transport=google_chat.", file=sys.stderr)
+        return 2
+    from .chat.google_chat import list_spaces
+
+    spaces = list_spaces(config)
+    if not spaces:
+        print("No spaces visible. Check your auth / that you're in the DM.")
+        return 0
+    print(f"{'API NAME':<28}  {'TYPE':<16}  DISPLAY NAME")
+    for name, stype, display in spaces:
+        label = display or ("(direct message)" if "DIRECT" in stype else "")
+        print(f"{name:<28}  {stype:<16}  {label}")
+    print("\nUse the API NAME (e.g. spaces/AAAA…) as KGS__CHAT__GOOGLE__SPACE.")
     return 0
 
 

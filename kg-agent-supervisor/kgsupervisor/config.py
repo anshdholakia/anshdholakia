@@ -32,6 +32,12 @@ class WebhookConfig:
 @dataclass
 class GoogleConfig:
     space: Optional[str] = None              # "spaces/AAAA…"
+    # Act as YOU (your own ADC). Required to reach a 1:1 DM with another Chat
+    # app, since you can't add a third app to a DM. Run first:
+    #   gcloud auth application-default login \
+    #     --scopes=https://www.googleapis.com/auth/chat.messages,\
+    #              https://www.googleapis.com/auth/cloud-platform
+    user_auth: bool = False
     credentials_file: Optional[str] = None   # service-account JSON key (if allowed)
     # Key-free auth for orgs that block SA key creation: authenticate as yourself
     # (gcloud auth application-default login) and impersonate this service

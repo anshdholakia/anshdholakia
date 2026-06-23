@@ -9,20 +9,22 @@ accepts it once:
 * its edits have settled for ``stability_seconds`` (no further edits), or
 * edits never settle before the timeout → reported as a hang (``None``).
 
-Auth uses a Google Cloud **service account** acting as a Chat app. Posting can
-go through the API (default) or, if ``chat.google.webhook_url`` is set, through
-an incoming webhook (your existing webhook) while replies are still read via the
-API. Set ``chat.google.bot_name`` so we only treat the agent's messages as
-replies (and never read our own prompts back).
+Auth has three modes (`chat.google`):
 
-Setup (see README for the click-by-click version):
+* ``user_auth: true`` — act as **you** via your own ADC
+  (``gcloud auth application-default login``). This is the only way to reach a
+  1:1 **DM** with another Chat app (you can't add a 3rd app to a DM).
+* ``credentials_file`` — a service-account JSON key (Chat app identity).
+* ``impersonate_service_account`` — key-free: impersonate a service account
+  using your ADC. Both SA modes require the app to be a member of the space, so
+  they work for spaces, not DMs with other apps.
 
-1. Enable the **Google Chat API** in a Google Cloud project.
-2. Create a service account + JSON key; point ``credentials_file`` at it.
-3. Configure the Chat app to use that service account and add it to the space.
-4. Note the space id ``spaces/AAAA…``.
+Posting can go through the API (default) or, if ``chat.google.webhook_url`` is
+set, through an incoming webhook while replies are still read via the API. Set
+``chat.google.bot_name`` to only treat the agent's messages as replies.
 
-Required scope: ``https://www.googleapis.com/auth/chat.bot``.
+Run ``python3 -m kgsupervisor --config <cfg> --list-spaces`` to print the API
+ids of the spaces/DMs you can see, so you can find the DM with your agent.
 """
 
 from __future__ import annotations
@@ -33,7 +35,10 @@ from typing import List, Optional, Set, Tuple
 from .base import ChatClient, Reply
 
 API_ROOT = "https://chat.googleapis.com/v1"
+# Service-account (Chat app) scope.
 SCOPES = ["https://www.googleapis.com/auth/chat.bot"]
+# User-auth scope: post + read messages on behalf of the signed-in user.
+USER_SCOPES = ["https://www.googleapis.com/auth/chat.messages"]
 
 
 class GoogleChatClient(ChatClient):
@@ -54,12 +59,10 @@ class GoogleChatClient(ChatClient):
         if not self.space or not self.space.startswith("spaces/"):
             raise ValueError(
                 "chat.google.space must look like 'spaces/AAAAxxxx'. "
-                f"Got {self.space!r}."
+                f"Got {self.space!r}. Tip: run with --list-spaces to find it."
             )
 
-        creds = self._build_credentials(g)
-        self._service_account_email = creds.service_account_email
-        self._session = AuthorizedSession(creds)
+        self._session, self._identity_email = _make_session(g)
 
         self._requests = requests
         self._webhook_url = g.webhook_url            # hybrid posting
@@ -73,34 +76,6 @@ class GoogleChatClient(ChatClient):
         # Only consider messages created after this moment.
         self._last_seen = time.time()
 
-    @staticmethod
-    def _build_credentials(g):
-        """Get credentials for the Chat app, key-file or impersonation based."""
-        if g.credentials_file:
-            from google.oauth2 import service_account
-
-            return service_account.Credentials.from_service_account_file(
-                g.credentials_file, scopes=SCOPES
-            )
-        if g.impersonate_service_account:
-            # Key-free: use your own ADC (gcloud auth application-default login)
-            # to mint short-lived tokens for the target service account. Requires
-            # the "Service Account Token Creator" role on that SA.
-            from google.auth import default as adc_default
-            from google.auth import impersonated_credentials
-
-            source, _ = adc_default()
-            return impersonated_credentials.Credentials(
-                source_credentials=source,
-                target_principal=g.impersonate_service_account,
-                target_scopes=SCOPES,
-            )
-        raise ValueError(
-            "Set chat.google.credentials_file (JSON key) OR "
-            "chat.google.impersonate_service_account (key-free, recommended when "
-            "your org blocks SA key creation). For impersonation, first run:\n"
-            "    gcloud auth application-default login"
-        )
 
     # ------------------------------------------------------------------ post
     def post(self, text: str, thread_key: Optional[str] = None) -> None:
@@ -217,7 +192,7 @@ class GoogleChatClient(ChatClient):
 
     def _is_agent(self, sender: dict, label: str) -> bool:
         # Never treat our own service-account posts as replies.
-        if sender.get("name", "").endswith(self._service_account_email):
+        if self._identity_email and sender.get("name", "").endswith(self._identity_email):
             return False
         # If a bot_name filter is configured, the sender must match it.
         if self._bot_name:
@@ -230,6 +205,78 @@ class GoogleChatClient(ChatClient):
 
     def close(self) -> None:  # pragma: no cover
         self._session.close()
+
+
+def _make_session(g):
+    """Build an authorized HTTP session. Returns (session, identity_email|None).
+
+    Picks the auth mode from config: user_auth (act as you), credentials_file
+    (SA key), or impersonate_service_account (key-free SA).
+    """
+    from google.auth.transport.requests import AuthorizedSession
+
+    if getattr(g, "user_auth", False):
+        # Act as the signed-in user. Reaches DMs you're a participant in.
+        # First run: gcloud auth application-default login \
+        #   --scopes=https://www.googleapis.com/auth/chat.messages,\
+        #            https://www.googleapis.com/auth/cloud-platform
+        from google.auth import default as adc_default
+
+        creds, _ = adc_default(scopes=USER_SCOPES)
+        return AuthorizedSession(creds), None
+
+    if g.credentials_file:
+        from google.oauth2 import service_account
+
+        creds = service_account.Credentials.from_service_account_file(
+            g.credentials_file, scopes=SCOPES
+        )
+        return AuthorizedSession(creds), creds.service_account_email
+
+    if g.impersonate_service_account:
+        from google.auth import default as adc_default
+        from google.auth import impersonated_credentials
+
+        source, _ = adc_default()
+        creds = impersonated_credentials.Credentials(
+            source_credentials=source,
+            target_principal=g.impersonate_service_account,
+            target_scopes=SCOPES,
+        )
+        return AuthorizedSession(creds), g.impersonate_service_account
+
+    raise ValueError(
+        "Configure auth under chat.google: set user_auth: true (act as you — "
+        "required for a DM with another app), OR credentials_file (SA key), OR "
+        "impersonate_service_account (key-free SA). For user_auth/impersonation, "
+        "first run: gcloud auth application-default login"
+    )
+
+
+def list_spaces(config) -> List[Tuple[str, str, str]]:
+    """Return (name, spaceType, displayName) for every space/DM you can see."""
+    session, _ = _make_session(config.chat.google)
+    out: List[Tuple[str, str, str]] = []
+    page = None
+    while True:
+        params = {"pageSize": 100}
+        if page:
+            params["pageToken"] = page
+        resp = session.get(f"{API_ROOT}/spaces", params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        for s in data.get("spaces", []):
+            out.append(
+                (
+                    s.get("name", ""),
+                    s.get("spaceType") or s.get("type") or "",
+                    s.get("displayName") or "",
+                )
+            )
+        page = data.get("nextPageToken")
+        if not page:
+            break
+    return out
 
 
 def _rfc3339(epoch: float) -> str:

@@ -148,6 +148,35 @@ once the edits settle (or a final marker appears) — see below.
 > The client filters out its own posts and (with `bot_name` set) only treats
 > your agent's messages as replies.
 
+### Talking to an agent in a 1:1 DM (act as you)
+
+If you message your agent in a **direct message** (URL like
+`…#chat/dm/…`) rather than a named space, you **cannot** add the orchestrator as
+a service-account Chat app — a DM is private between you and that one app. So the
+orchestrator authenticates **as you** and drives your existing DM. Set
+`chat.google.user_auth: true` (already set in `config.hulk.yaml`), then:
+
+```bash
+# one-time login WITH the chat scope:
+gcloud auth application-default login \
+  --scopes=https://www.googleapis.com/auth/chat.messages,https://www.googleapis.com/auth/cloud-platform
+
+# find the DM's API id (prints spaces/… for every space + DM you can see):
+python3 -m kgsupervisor --config config.hulk.yaml --list-spaces
+
+# then run, pointing at that DM:
+export KGS__CHAT__GOOGLE__SPACE="spaces/AAAA..."
+python3 -m kgsupervisor --config config.hulk.yaml --graph examples/sample_graph.json
+```
+
+In this mode the supervisor posts as you (exactly like typing in the DM) and
+reads the agent's replies. No service account, no key, no adding apps to the DM.
+
+> If your org blocks adding the `chat.messages` scope to ADC, the fallback is to
+> create a Chat **space**, add both your agent and a service-account orchestrator
+> app to it, and use the `credentials_file`/`impersonate_service_account` modes
+> below instead.
+
 **Key-free auth (org blocks SA keys).** Many orgs enforce a policy that blocks
 downloading service-account JSON keys
 (`iam.disableServiceAccountKeyCreation`). In that case, don't create a key —

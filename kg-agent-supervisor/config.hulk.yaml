@@ -1,25 +1,25 @@
 # Supervisor config for the "hulk" Gemini agent (gemclaw-hulk.service).
 # Run with:  python3 -m kgsupervisor --config config.hulk.yaml
 #
-# Key-free auth (your org blocks SA key downloads). First, once per machine:
-#   gcloud auth application-default login
-# Then set, before running:
-#   export KGS__CHAT__GOOGLE__SPACE="spaces/AAAAxxxxxxx"                 # hulk's space
-#   export KGS__CHAT__GOOGLE__IMPERSONATE_SERVICE_ACCOUNT="kgs-orchestrator@gemclaw-anshdholakia.iam.gserviceaccount.com"
-#   # (you need the "Service Account Token Creator" role on that SA)
-#
-# If your org DID allow a JSON key instead, set this rather than impersonation:
-#   export KGS__CHAT__GOOGLE__CREDENTIALS_FILE="/path/to/sa.json"
+# Hulk is a 1:1 DM with a Chat app, so we act as YOU (you can't add a 3rd app to
+# a DM). One-time login WITH the chat scope:
+#   gcloud auth application-default login \
+#     --scopes=https://www.googleapis.com/auth/chat.messages,https://www.googleapis.com/auth/cloud-platform
+# Find the DM's API id:
+#   python3 -m kgsupervisor --config config.hulk.yaml --list-spaces
+# Then set it before running:
+#   export KGS__CHAT__GOOGLE__SPACE="spaces/AAAAxxxxxxx"
 
 graph_file: examples/sample_graph.json   # <- point this at your real task graph
 
 chat:
   transport: google_chat
   google:
-    space: null                       # via env KGS__CHAT__GOOGLE__SPACE
-    credentials_file: null             # via env (only if key creation is allowed)
-    impersonate_service_account: null  # via env KGS__CHAT__GOOGLE__IMPERSONATE_SERVICE_ACCOUNT
-    bot_name: null                     # optional (separate spaces don't need it)
+    user_auth: true                   # act as you — required for a DM with an app
+    space: null                       # via env KGS__CHAT__GOOGLE__SPACE (the DM)
+    credentials_file: null             # (unused in user_auth mode)
+    impersonate_service_account: null  # (unused in user_auth mode)
+    bot_name: null
     # Your agent streams by editing one message and can't append a sentinel,
     # so we accept the reply once edits go quiet for stability_seconds.
     track_edits: true

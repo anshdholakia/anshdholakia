@@ -37,13 +37,12 @@ from .base import ChatClient, Reply
 API_ROOT = "https://chat.googleapis.com/v1"
 # Service-account (Chat app) scope.
 SCOPES = ["https://www.googleapis.com/auth/chat.bot"]
-# User-auth scopes: post/read messages (chat.messages) and list spaces to find
-# a DM's id (chat.spaces.readonly). These must be granted at ADC login time:
-#   gcloud auth application-default login --scopes=<comma-separated list>
-USER_SCOPES = [
-    "https://www.googleapis.com/auth/chat.messages",
-    "https://www.googleapis.com/auth/chat.spaces.readonly",
-]
+# User-auth scope for the actual job: post + read messages as the signed-in
+# user (works in your DMs). Granted at ADC login:
+#   gcloud auth application-default login --scopes=https://www.googleapis.com/auth/chat.messages
+# NOTE: --list-spaces additionally needs chat.spaces.readonly, which some orgs
+# block. You don't need it if you already know the DM id (it's in the chat URL).
+USER_SCOPES = ["https://www.googleapis.com/auth/chat.messages"]
 
 
 class GoogleChatClient(ChatClient):

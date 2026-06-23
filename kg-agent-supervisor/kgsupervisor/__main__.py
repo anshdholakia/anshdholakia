@@ -41,6 +41,12 @@ def main(argv=None) -> int:
         action="store_true",
         help="List the spaces/DMs your auth can see (to find a DM's API id), then exit.",
     )
+    parser.add_argument(
+        "--send",
+        metavar="TEXT",
+        help="Post one message to the configured space and print the reply, then "
+        "exit. Quick connectivity test (needs only the chat.messages scope).",
+    )
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--log-file", default=None)
     args = parser.parse_args(argv)
@@ -55,6 +61,9 @@ def main(argv=None) -> int:
 
     if args.list_spaces:
         return _list_spaces(config)
+
+    if args.send is not None:
+        return _send_test(config, args.send)
 
     if args.reset:
         state_path = Path(config.run.state_file)
@@ -87,6 +96,27 @@ def _list_spaces(config) -> int:
         label = display or ("(direct message)" if "DIRECT" in stype else "")
         print(f"{name:<28}  {stype:<16}  {label}")
     print("\nUse the API NAME (e.g. spaces/AAAA…) as KGS__CHAT__GOOGLE__SPACE.")
+    return 0
+
+
+def _send_test(config, text: str) -> int:
+    from .chat import build_chat_client
+
+    client = build_chat_client(config)
+    target = getattr(config.chat.google, "space", None)
+    print(f"Posting to {target} …")
+    try:
+        client.post(text)
+    except Exception as exc:  # noqa: BLE001 - surface the API reason
+        print(f"\nPOST failed: {exc}", file=sys.stderr)
+        return 1
+    print("Posted OK. Waiting up to 60s for a reply …")
+    reply = client.wait_for_reply(timeout=60, poll_interval=3)
+    if reply is None:
+        print("No reply within 60s (agent may still be editing, or it hung).")
+    else:
+        print(f"\n--- reply from {reply.sender} ---\n{reply.text}\n")
+    client.close()
     return 0
 
 

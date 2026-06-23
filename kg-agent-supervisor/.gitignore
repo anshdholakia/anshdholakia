@@ -6,6 +6,7 @@ service-account*.json
 
 # Runtime state
 .kgs_state.json
+.kgs_state.*.json
 *.log
 
 # Python

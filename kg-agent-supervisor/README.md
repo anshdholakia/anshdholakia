@@ -194,6 +194,42 @@ the chat `/restart`. Secrets/commands can also come from env vars, e.g.
 > The shell command runs through your local shell, so your normal SSH config /
 > keys / `gcert` session to the cloudtop must already work from the terminal.
 
+### Running both agents (hulk + fan5)
+
+Two ready-to-edit configs are included — `config.hulk.yaml` and
+`config.fan5.yaml` — one per service on `anshdholakia.c.googlers.com`. Each one
+restarts **only its own** service, so recovering one agent never disturbs the
+other:
+
+```bash
+# terminal 1 — point env at hulk's space + bot, then:
+export KGS__CHAT__GOOGLE__SPACE="spaces/AAAA..." \
+       KGS__CHAT__GOOGLE__CREDENTIALS_FILE="$HOME/sa.json" \
+       KGS__CHAT__GOOGLE__BOT_NAME="<hulk bot name>"
+python3 -m kgsupervisor --config config.hulk.yaml --graph hulk_tasks.json
+
+# terminal 2 — fan5's space + bot:
+export KGS__CHAT__GOOGLE__SPACE="spaces/BBBB..." \
+       KGS__CHAT__GOOGLE__CREDENTIALS_FILE="$HOME/sa.json" \
+       KGS__CHAT__GOOGLE__BOT_NAME="<fan5 bot name>"
+python3 -m kgsupervisor --config config.fan5.yaml --graph fan5_tasks.json
+```
+
+Notes for your setup:
+
+- **Set `BOT_NAME`.** If both agents post into the *same* Chat space, the
+  supervisor needs `bot_name` to tell their replies apart (otherwise it might
+  read the other agent's message as its reply). Separate spaces also work — just
+  give each config its own `SPACE`.
+- **No final marker (Gemini can't add one).** Detection therefore relies on the
+  message edits going quiet for `stability_seconds` (default 12s in these
+  configs). If you sometimes accept a half-finished answer, raise
+  `stability_seconds`; if it feels sluggish, lower it. Full silence past
+  `run.response_timeout` (300s) is always treated as a hang regardless.
+- To restart *both* services together instead, set `method: both`-style or just
+  change `shell_command` to restart both units, e.g.
+  `... systemctl restart gemclaw-hulk.service gemclaw-fan5.service`.
+
 ---
 
 ## Define your own knowledge graph

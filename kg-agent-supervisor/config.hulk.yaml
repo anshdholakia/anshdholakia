@@ -1,0 +1,46 @@
+# Supervisor config for the "hulk" Gemini agent (gemclaw-hulk.service).
+# Run with:  python3 -m kgsupervisor --config config.hulk.yaml
+#
+# Secrets are NOT in this file — set them in the environment before running:
+#   export KGS__CHAT__GOOGLE__SPACE="spaces/AAAAxxxxxxx"        # hulk's space
+#   export KGS__CHAT__GOOGLE__CREDENTIALS_FILE="/path/to/sa.json"
+#   export KGS__CHAT__GOOGLE__BOT_NAME="<hulk bot display name>"  # required if
+#                                  # both agents share one space
+#   # optional, to post via your existing webhook instead of the API:
+#   # export KGS__CHAT__GOOGLE__WEBHOOK_URL="https://chat.googleapis.com/v1/..."
+
+graph_file: examples/sample_graph.json   # <- point this at your real task graph
+
+chat:
+  transport: google_chat
+  google:
+    space: null               # via env KGS__CHAT__GOOGLE__SPACE
+    credentials_file: null     # via env KGS__CHAT__GOOGLE__CREDENTIALS_FILE
+    bot_name: null             # via env KGS__CHAT__GOOGLE__BOT_NAME
+    # Your agent streams by editing one message and can't append a sentinel,
+    # so we accept the reply once edits go quiet for stability_seconds.
+    track_edits: true
+    stability_seconds: 12      # tune: longer = safer against premature accept
+    final_marker: null         # (Gemini won't emit one)
+
+recovery:
+  restart:
+    method: shell              # the agent goes silent when dead; ssh+systemctl
+    shell_command: "ssh anshdholakia.c.googlers.com -- sudo systemctl restart gemclaw-hulk.service"
+    shell_timeout_seconds: 60
+    readiness:
+      command: "ssh anshdholakia.c.googlers.com -- systemctl is-active --quiet gemclaw-hulk.service"
+      timeout_seconds: 180
+      poll_interval: 5
+  restart_grace_seconds: 15
+  max_attempts: 4
+  backoff_base_seconds: 5
+  backoff_max_seconds: 120
+  failure_phrases: []          # empty = built-in defaults (hung up, 503, ...)
+
+run:
+  response_timeout: 300        # Gemini edits can take a while; declare a hang after this
+  poll_interval: 4             # how often to re-read the streamed message
+  inter_node_delay: 2
+  thread_key: null
+  state_file: .kgs_state.hulk.json

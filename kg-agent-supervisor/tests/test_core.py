@@ -139,6 +139,55 @@ def test_shell_restart_and_readiness_run():
     assert wait_until_ready(cfg) is True
 
 
+def test_status_board_snapshot_tracks_state():
+    from kgsupervisor.status import StatusBoard, RUNNING, DONE
+
+    g = KnowledgeGraph(
+        [Node("a", "do a"), Node("b", "do b", depends_on=["a"])],
+        title="t",
+    )
+    board = StatusBoard(g)
+    snap = board.snapshot()
+    assert snap["total"] == 2
+    assert snap["counts"]["pending"] == 2
+    assert {e["source"] for e in snap["edges"]} == {"a"}
+    # levels: a=0, b=1 (used for layout)
+    levels = {n["id"]: n["level"] for n in snap["nodes"]}
+    assert levels == {"a": 0, "b": 1}
+
+    board.set("a", RUNNING)
+    board.set("a", DONE)
+    snap = board.snapshot()
+    by_id = {n["id"]: n["status"] for n in snap["nodes"]}
+    assert by_id["a"] == "done" and by_id["b"] == "pending"
+    assert snap["counts"]["done"] == 1
+
+
+def test_dashboard_serves_status_over_http():
+    import json
+    import urllib.request
+    from kgsupervisor.dashboard import Dashboard
+    from kgsupervisor.status import StatusBoard
+
+    g = KnowledgeGraph([Node("only", "do it")], title="dash")
+    board = StatusBoard(g)
+    dash = Dashboard(board, host="127.0.0.1", port=0)  # port 0 = pick a free one
+    dash.start()
+    try:
+        url = f"http://127.0.0.1:{dash.actual_port}/api/status"
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+        assert data["graph_title"] == "dash"
+        assert data["nodes"][0]["id"] == "only"
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{dash.actual_port}/", timeout=5
+        ) as resp:
+            html = resp.read().decode()
+        assert "<svg" in html and "knowledge graph" in html
+    finally:
+        dash.stop()
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

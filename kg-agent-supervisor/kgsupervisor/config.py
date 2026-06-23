@@ -121,11 +121,19 @@ class RunConfig:
 
 
 @dataclass
+class DashboardConfig:
+    enabled: bool = False          # serve the live graph dashboard
+    host: str = "127.0.0.1"
+    port: int = 8765
+
+
+@dataclass
 class Config:
     graph_file: str = "examples/sample_graph.json"
     chat: ChatConfig = field(default_factory=ChatConfig)
     recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
     run: RunConfig = field(default_factory=RunConfig)
+    dashboard: DashboardConfig = field(default_factory=DashboardConfig)
 
 
 # ---------------------------------------------------------------------- load

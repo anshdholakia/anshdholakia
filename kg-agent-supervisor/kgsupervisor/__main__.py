@@ -47,6 +47,17 @@ def main(argv=None) -> int:
         help="Post one message to the configured space and print the reply, then "
         "exit. Quick connectivity test (needs only the chat.messages scope).",
     )
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Serve the live graph dashboard in a browser while running.",
+    )
+    parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=None,
+        help="Port for the dashboard (default 8765).",
+    )
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--log-file", default=None)
     args = parser.parse_args(argv)
@@ -58,6 +69,10 @@ def main(argv=None) -> int:
         config.graph_file = args.graph
     if args.transport:
         config.chat.transport = args.transport
+    if args.dashboard:
+        config.dashboard.enabled = True
+    if args.dashboard_port is not None:
+        config.dashboard.port = args.dashboard_port
 
     if args.list_spaces:
         return _list_spaces(config)

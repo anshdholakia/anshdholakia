@@ -23,9 +23,11 @@ from .agent import AgentSession
 from .chat import ChatClient, build_chat_client
 from .config import Config
 from .graph import KnowledgeGraph, Node
+from .dashboard import Dashboard
 from .health import HealthChecker, Verdict
 from .restart import perform_restart, wait_until_ready
 from .state import RunState
+from .status import DONE, FAILED, RECOVERING, RUNNING, StatusBoard
 
 log = logging.getLogger("kgs")
 
@@ -44,12 +46,15 @@ class Supervisor:
             failure_phrases=config.recovery.failure_phrases or None
         )
         self.state = RunState.load(config.run.state_file, self.graph.title)
+        self.board = StatusBoard(self.graph)
+        self.dashboard = None
         # Restore prior results into the session so dependency context survives
         # a process restart.
         for node_id, answer in self.state.completed.items():
             if node_id in self.graph:
                 turn = self.session.start_turn(node_id, self.graph.get(node_id).prompt)
                 self.session.complete_turn(turn, answer)
+                self.board.set(node_id, DONE, "restored from a previous run")
 
     # ------------------------------------------------------------------- run
     def run(self) -> None:
@@ -63,19 +68,45 @@ class Supervisor:
                 self.config.chat.transport,
             )
 
-        for idx, node in enumerate(order, start=1):
-            if self.state.is_done(node.id):
-                log.info("[%d/%d] %s — already done, skipping.", idx, total, node.id)
-                continue
-            log.info("[%d/%d] %s — starting.", idx, total, node.id)
-            answer = self._process_node(node)
-            self.state.mark_done(node.id, answer)
-            log.info("[%d/%d] %s — done.", idx, total, node.id)
-            if idx < total:
-                time.sleep(self.config.run.inter_node_delay)
+        if self.config.dashboard.enabled:
+            self.dashboard = Dashboard(
+                self.board, self.config.dashboard.host, self.config.dashboard.port
+            )
+            self.dashboard.start()
+
+        try:
+            for idx, node in enumerate(order, start=1):
+                if self.state.is_done(node.id):
+                    log.info("[%d/%d] %s — already done, skipping.", idx, total, node.id)
+                    continue
+                log.info("[%d/%d] %s — starting.", idx, total, node.id)
+                self.board.set(node.id, RUNNING)
+                try:
+                    answer = self._process_node(node)
+                except TaskFailed as exc:
+                    self.board.set(node.id, FAILED, str(exc))
+                    raise
+                self.state.mark_done(node.id, answer)
+                self.board.set(node.id, DONE)
+                log.info("[%d/%d] %s — done.", idx, total, node.id)
+                if idx < total:
+                    time.sleep(self.config.run.inter_node_delay)
+        finally:
+            self.client.close()
 
         log.info("All tasks complete. ✅")
-        self.client.close()
+        self._hold_dashboard()
+
+    def _hold_dashboard(self) -> None:
+        """Keep serving the final state so it stays viewable until Ctrl-C."""
+        if self.dashboard is None:
+            return
+        log.info("Dashboard still live at %s — press Ctrl-C to exit.", self.dashboard.url)
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
 
     # -------------------------------------------------------------- per node
     def _process_node(self, node: Node) -> str:
@@ -101,6 +132,12 @@ class Supervisor:
                 attempt,
                 self.config.recovery.max_attempts,
             )
+            self.board.set(
+                node.id,
+                RECOVERING,
+                f"attempt {attempt}/{self.config.recovery.max_attempts}: "
+                f"{verdict.verdict.value}",
+            )
             if attempt > self.config.recovery.max_attempts:
                 raise TaskFailed(
                     f"Node {node.id!r} failed after "
@@ -111,6 +148,7 @@ class Supervisor:
             self._recover(verdict.verdict, attempt)
             # After recovery we re-issue the *same* prompt; context was replayed
             # inside _recover().
+            self.board.set(node.id, RUNNING, f"retrying after recovery {attempt}")
 
     # ----------------------------------------------------------- conversation
     def _ask(self, prompt: str):

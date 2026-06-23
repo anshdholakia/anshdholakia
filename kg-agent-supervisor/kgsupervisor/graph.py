@@ -99,6 +99,24 @@ class KnowledgeGraph:
     def dependencies(self, node_id: str) -> List[Node]:
         return [self._nodes[d] for d in self._nodes[node_id].depends_on]
 
+    def edges(self) -> List[tuple]:
+        """Return (source, target) pairs, where source is a dependency."""
+        out = []
+        for node in self._nodes.values():
+            for dep in node.depends_on:
+                out.append((dep, node.id))
+        return out
+
+    def levels(self) -> Dict[str, int]:
+        """Map each node to its depth (longest dependency chain) for layout."""
+        level: Dict[str, int] = {}
+        for node in self.topological_order():
+            if not node.depends_on:
+                level[node.id] = 0
+            else:
+                level[node.id] = 1 + max(level[d] for d in node.depends_on)
+        return level
+
     # ------------------------------------------------------------- traversal
     def topological_order(self) -> List[Node]:
         """Return nodes in dependency order (Kahn's algorithm).

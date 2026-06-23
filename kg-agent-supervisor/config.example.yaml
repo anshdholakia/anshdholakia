@@ -58,6 +58,11 @@ recovery:
   backoff_max_seconds: 120
   failure_phrases: []             # extra "it died" phrases; empty = sane defaults
 
+dashboard:
+  enabled: false                  # or pass --dashboard on the CLI
+  host: 127.0.0.1
+  port: 8765                      # open http://127.0.0.1:8765 to watch the graph live
+
 run:
   response_timeout: 120           # seconds to wait for a reply before calling it hung
   poll_interval: 3                # how often to poll the Chat API for new replies

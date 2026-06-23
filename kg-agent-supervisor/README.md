@@ -283,6 +283,33 @@ Notes for your setup:
 
 ---
 
+## Live graph dashboard
+
+Watch the graph execute in your browser — each node lights up as the agent works
+through it (pending → running → done, or amber while recovering from a hang, red
+on failure). It's a self-contained page (no internet/CDN needed) served by the
+supervisor itself.
+
+```bash
+python3 -m kgsupervisor --config config.hulk.yaml --graph my_tasks.json --dashboard
+# then open http://127.0.0.1:8765
+```
+
+Or enable it in config:
+
+```yaml
+dashboard:
+  enabled: true
+  port: 8765
+```
+
+The page polls a JSON status endpoint (`GET /api/status`) once a second, draws
+the graph as nodes + dependency edges laid out by depth, and shows a live
+activity log. After the run finishes it keeps serving the final state until you
+press Ctrl-C, so you can review what happened. Status is also a clean data
+surface if you want to build your own UI: hit `/api/status` for the full
+node/edge/status snapshot.
+
 ## Define your own knowledge graph
 
 Edit a JSON file like this:
@@ -356,6 +383,8 @@ kg-agent-supervisor/
     ├── health.py          # hang / dead / empty detection
     ├── supervisor.py      # the main loop + recovery cycle
     ├── state.py           # resumable progress
+    ├── status.py          # live run state for the dashboard
+    ├── dashboard.py       # self-contained web dashboard (stdlib HTTP server)
     └── chat/              # transports: mock, webhook, google_chat
 ```
 

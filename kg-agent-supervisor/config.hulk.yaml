@@ -2,9 +2,10 @@
 # Run with:  python3 -m kgsupervisor --config config.hulk.yaml
 #
 # Hulk is a 1:1 DM with a Chat app, so we act as YOU (you can't add a 3rd app to
-# a DM). One-time login WITH the chat scope:
+# a DM). One-time login WITH the chat scopes (messages = post/read,
+# spaces.readonly = list spaces so --list-spaces works):
 #   gcloud auth application-default login \
-#     --scopes=https://www.googleapis.com/auth/chat.messages,https://www.googleapis.com/auth/cloud-platform
+#     --scopes=https://www.googleapis.com/auth/chat.messages,https://www.googleapis.com/auth/chat.spaces.readonly,https://www.googleapis.com/auth/cloud-platform
 # Find the DM's API id:
 #   python3 -m kgsupervisor --config config.hulk.yaml --list-spaces
 # Then set it before running:

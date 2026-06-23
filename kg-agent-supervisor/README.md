@@ -157,9 +157,12 @@ orchestrator authenticates **as you** and drives your existing DM. Set
 `chat.google.user_auth: true` (already set in `config.hulk.yaml`), then:
 
 ```bash
-# one-time login WITH the chat scope:
+# one-time login WITH the chat scopes (messages = post/read; spaces.readonly =
+# needed by --list-spaces). Also set a quota project so the API has somewhere to
+# bill to:
 gcloud auth application-default login \
-  --scopes=https://www.googleapis.com/auth/chat.messages,https://www.googleapis.com/auth/cloud-platform
+  --scopes=https://www.googleapis.com/auth/chat.messages,https://www.googleapis.com/auth/chat.spaces.readonly,https://www.googleapis.com/auth/cloud-platform
+gcloud auth application-default set-quota-project gemclaw-anshdholakia-6vl6j5
 
 # find the DM's API id (prints spaces/… for every space + DM you can see):
 python3 -m kgsupervisor --config config.hulk.yaml --list-spaces

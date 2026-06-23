@@ -1,0 +1,44 @@
+# Supervisor config for the "fan5" Gemini agent (gemclaw-fan5.service).
+# Run with:  python3 -m kgsupervisor --config config.fan5.yaml
+#
+# Key-free auth (your org blocks SA key downloads). First, once per machine:
+#   gcloud auth application-default login
+# Then set, before running:
+#   export KGS__CHAT__GOOGLE__SPACE="spaces/BBBByyyyyyy"                 # fan5's space
+#   export KGS__CHAT__GOOGLE__IMPERSONATE_SERVICE_ACCOUNT="kgs-orchestrator@gemclaw-anshdholakia.iam.gserviceaccount.com"
+#   # (you need the "Service Account Token Creator" role on that SA)
+
+graph_file: examples/sample_graph.json   # <- point this at your real task graph
+
+chat:
+  transport: google_chat
+  google:
+    space: null                       # via env KGS__CHAT__GOOGLE__SPACE
+    credentials_file: null             # via env (only if key creation is allowed)
+    impersonate_service_account: null  # via env KGS__CHAT__GOOGLE__IMPERSONATE_SERVICE_ACCOUNT
+    bot_name: null                     # optional (separate spaces don't need it)
+    track_edits: true
+    stability_seconds: 12
+    final_marker: null
+
+recovery:
+  restart:
+    method: shell
+    shell_command: "ssh anshdholakia.c.googlers.com -- sudo systemctl restart gemclaw-fan5.service"
+    shell_timeout_seconds: 60
+    readiness:
+      command: "ssh anshdholakia.c.googlers.com -- systemctl is-active --quiet gemclaw-fan5.service"
+      timeout_seconds: 180
+      poll_interval: 5
+  restart_grace_seconds: 15
+  max_attempts: 4
+  backoff_base_seconds: 5
+  backoff_max_seconds: 120
+  failure_phrases: []
+
+run:
+  response_timeout: 300
+  poll_interval: 4
+  inter_node_delay: 2
+  thread_key: null
+  state_file: .kgs_state.fan5.json

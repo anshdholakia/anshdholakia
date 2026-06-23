@@ -1,0 +1,18 @@
+# Local config & secrets — never commit
+config.yaml
+*.local.yaml
+service-account*.json
+*credentials*.json
+
+# Runtime state
+.kgs_state.json
+.kgs_state.*.json
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/

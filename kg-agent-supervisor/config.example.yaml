@@ -1,0 +1,71 @@
+# kg-agent-supervisor configuration.
+# Copy to config.yaml and edit. Secrets are better set via env vars (see README).
+
+graph_file: examples/sample_graph.json
+
+chat:
+  # mock | webhook | google_chat
+  #   mock         -> fake bot, no credentials, great for a first run
+  #   webhook      -> post via a Google Chat incoming webhook (send-only)
+  #   google_chat  -> full REST API; can post AND read the bot's replies
+  transport: mock
+
+  mock:
+    fail_every: 4          # pretend to hang on every Nth message (0 = never)
+    latency_seconds: 0.3
+
+  webhook:
+    # Set via env: KGS__CHAT__WEBHOOK__URL
+    url: null
+    interactive: true      # ask you to paste the bot's reply on the console
+
+  google:
+    # Set via env: KGS__CHAT__GOOGLE__SPACE / __CREDENTIALS_FILE
+    space: null            # "spaces/AAAAxxxxxxx"
+    credentials_file: null # path to service-account JSON key
+    # Optional hybrid posting: POST prompts through your existing incoming
+    # webhook while still READING replies via the API. Leave null to post via API.
+    webhook_url: null      # or set env KGS__CHAT__GOOGLE__WEBHOOK_URL
+    # Only treat messages from your agent as replies (recommended, esp. with a
+    # webhook). Matches the sender's display name (substring) or resource name.
+    bot_name: null         # e.g. "Gemini Agent"
+    # Your agent streams by EDITING one message until done — watch it settle:
+    track_edits: true
+    stability_seconds: 8   # accept once there are no edits for this long...
+    final_marker: null     # ...OR immediately when the message contains this
+                           #    sentinel. Have your agent append e.g. "[[END]]".
+
+recovery:
+  restart:
+    # chat  -> post chat_command in the space (only if the agent can still read)
+    # shell -> run shell_command (ssh + systemctl) — reliable when it's silent
+    # both  -> shell first, then chat
+    method: chat
+    chat_command: "/restart"
+    # The reliable restart for a dead agent on your cloudtop, e.g.:
+    #   "ssh cloudtop -- sudo systemctl restart my-agent.service"
+    shell_command: null               # or env KGS__RECOVERY__RESTART__SHELL_COMMAND
+    shell_timeout_seconds: 60
+    readiness:
+      # Shell command; exit 0 means "agent is back". Polled until healthy.
+      #   "ssh cloudtop -- systemctl is-active --quiet my-agent.service"
+      command: null
+      timeout_seconds: 120
+      poll_interval: 5
+  restart_grace_seconds: 10       # wait after restart (if no readiness probe)
+  max_attempts: 4                 # recovery tries per task before giving up
+  backoff_base_seconds: 5         # exponential backoff base between attempts
+  backoff_max_seconds: 120
+  failure_phrases: []             # extra "it died" phrases; empty = sane defaults
+
+dashboard:
+  enabled: false                  # or pass --dashboard on the CLI
+  host: 127.0.0.1
+  port: 8765                      # open http://127.0.0.1:8765 to watch the graph live
+
+run:
+  response_timeout: 120           # seconds to wait for a reply before calling it hung
+  poll_interval: 3                # how often to poll the Chat API for new replies
+  inter_node_delay: 2             # pause between tasks
+  thread_key: null                # set a string to keep the whole run in one thread
+  state_file: .kgs_state.json     # progress file (resume support)

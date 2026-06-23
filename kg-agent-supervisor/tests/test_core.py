@@ -91,9 +91,9 @@ def test_supervisor_completes_with_recovering_mock():
         sup = Supervisor(cfg)
         sup.run()  # should not raise
 
-        assert sup.state.is_done("n1")
-        assert sup.state.is_done("n2")
-        assert sup.state.is_done("n3")
+        assert sup.state.answer_for("n1") is not None
+        assert sup.state.answer_for("n2") is not None
+        assert sup.state.answer_for("n3") is not None
 
 
 def test_nested_config_from_dict():
@@ -186,6 +186,86 @@ def test_dashboard_serves_status_over_http():
         assert "<svg" in html and "knowledge graph" in html
     finally:
         dash.stop()
+
+
+def test_graphstore_add_connect_save_and_reject_cycle():
+    from kgsupervisor.editor import GraphStore, GraphError
+
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "g.json")
+        store = GraphStore(path)
+        store.add_node("a", "do a")
+        store.add_node("b", "do b", depends_on=["a"])
+        snap = store.snapshot()
+        assert snap["editable"] is True
+        assert snap["total"] == 2
+        assert {(e["source"], e["target"]) for e in snap["edges"]} == {("a", "b")}
+
+        # duplicate id rejected
+        try:
+            store.add_node("a", "dup")
+        except GraphError:
+            pass
+        else:
+            raise AssertionError("expected duplicate-id rejection")
+
+        # cycle rejected (a depends on b, b already depends on a)
+        try:
+            store.update_node("a", depends_on=["b"])
+        except GraphError:
+            pass
+        else:
+            raise AssertionError("expected cycle rejection")
+
+        # save + reload round-trips
+        store.save()
+        import json as _json
+
+        reloaded = _json.loads(open(path).read())
+        assert reloaded["nodes"][1]["depends_on"] == ["a"]
+
+        # delete removes the node and any edges into it
+        store.delete_node("a")
+        snap = store.snapshot()
+        assert snap["total"] == 1
+        assert snap["nodes"][0]["depends_on"] == []
+
+
+def test_resume_cache_invalidated_when_prompt_changes():
+    """Editing a node's prompt must make it re-run, not show as cached-done."""
+    import json
+
+    graph_v1 = {"title": "g", "nodes": [{"id": "n1", "prompt": "original"}]}
+    with tempfile.TemporaryDirectory() as d:
+        graph_path = os.path.join(d, "g.json")
+        state_path = os.path.join(d, "state.json")
+
+        def make_cfg():
+            cfg = Config()
+            cfg.graph_file = graph_path
+            cfg.chat.transport = "mock"
+            cfg.chat.mock.fail_every = 0
+            cfg.chat.mock.latency_seconds = 0.0
+            cfg.run.inter_node_delay = 0.0
+            cfg.run.response_timeout = 1.0
+            cfg.run.poll_interval = 0.01
+            cfg.run.state_file = state_path
+            return cfg
+
+        with open(graph_path, "w") as fh:
+            json.dump(graph_v1, fh)
+        Supervisor(make_cfg()).run()  # completes n1, writes state
+
+        # Re-run unchanged: n1 should be skipped (cached).
+        sup2 = Supervisor(make_cfg())
+        assert sup2.state.is_done("n1", sup2._fingerprint(sup2.graph.get("n1")))
+
+        # Now edit the prompt and confirm the cache no longer matches.
+        graph_v2 = {"title": "g", "nodes": [{"id": "n1", "prompt": "EDITED"}]}
+        with open(graph_path, "w") as fh:
+            json.dump(graph_v2, fh)
+        sup3 = Supervisor(make_cfg())
+        assert not sup3.state.is_done("n1", sup3._fingerprint(sup3.graph.get("n1")))
 
 
 if __name__ == "__main__":

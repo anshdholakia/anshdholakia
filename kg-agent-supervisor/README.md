@@ -310,6 +310,45 @@ press Ctrl-C, so you can review what happened. Status is also a clean data
 surface if you want to build your own UI: hit `/api/status` for the full
 node/edge/status snapshot.
 
+## Build the graph in the browser (editor mode)
+
+Instead of hand-writing JSON, you can create and connect nodes visually
+(Constella-style) and save back to the graph file:
+
+```bash
+python3 -m kgsupervisor --edit --graph my_tasks.json
+# open http://127.0.0.1:8765
+```
+
+In the editor you can:
+
+- **+ New node** — give it an id and a prompt (the task for the agent).
+- **Depends on** — tick other nodes to draw dependency edges; their outputs are
+  fed in as context, and order is derived from the edges.
+- Click any node to **edit** or **delete** it; the title is editable too.
+- **💾 Save to file** — writes valid graph JSON to `--graph` (every edit is
+  validated for unique ids, known dependencies, and no cycles before it's
+  accepted, so the saved graph is always runnable).
+
+It's the same page as the live dashboard, just in editable mode — so your
+internal/google3 tooling can drive the same `/api/node/*` + `/api/save`
+endpoints if you want to build on it. When you're done editing, run the graph
+normally.
+
+## Resuming & the progress cache
+
+The supervisor saves completed nodes to `run.state_file` and **skips them on the
+next run** so a long run can resume after a crash. A node is only skipped if its
+**fingerprint** (prompt + dependencies) is unchanged — so editing a node's
+prompt makes it re-run rather than showing stale "done". To control this:
+
+- `--reset` — wipe saved progress and run everything fresh.
+- `--no-resume` (or `run.resume: false`) — ignore the cache and re-run every
+  node, without deleting the file.
+
+Skipped nodes are logged explicitly (`skipping (cached from a previous run…)`),
+so a "done" you didn't expect is always traceable to the cache.
+
 ## Define your own knowledge graph
 
 Edit a JSON file like this:
@@ -382,9 +421,10 @@ kg-agent-supervisor/
     ├── agent.py           # conversation history + context replay
     ├── health.py          # hang / dead / empty detection
     ├── supervisor.py      # the main loop + recovery cycle
-    ├── state.py           # resumable progress
+    ├── state.py           # resumable progress (fingerprinted)
     ├── status.py          # live run state for the dashboard
-    ├── dashboard.py       # self-contained web dashboard (stdlib HTTP server)
+    ├── editor.py          # editable graph store (browser editor backend)
+    ├── dashboard.py       # self-contained web dashboard + editor (stdlib HTTP)
     └── chat/              # transports: mock, webhook, google_chat
 ```
 

@@ -118,6 +118,10 @@ class RunConfig:
     inter_node_delay: float = 2.0     # politeness delay between tasks
     thread_key: Optional[str] = None  # keep the whole run in one Chat thread
     state_file: str = ".kgs_state.json"
+    # Resume: skip nodes already completed in a prior run (matched by a
+    # fingerprint of the node, so edited nodes re-run). Set false to always
+    # re-run every node regardless of saved progress.
+    resume: bool = True
 
 
 @dataclass

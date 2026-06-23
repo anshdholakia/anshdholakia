@@ -16,6 +16,7 @@ from where it left off.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 
@@ -49,12 +50,23 @@ class Supervisor:
         self.board = StatusBoard(self.graph)
         self.dashboard = None
         # Restore prior results into the session so dependency context survives
-        # a process restart.
-        for node_id, answer in self.state.completed.items():
-            if node_id in self.graph:
-                turn = self.session.start_turn(node_id, self.graph.get(node_id).prompt)
-                self.session.complete_turn(turn, answer)
-                self.board.set(node_id, DONE, "restored from a previous run")
+        # a process restart — but ONLY for nodes whose fingerprint still matches
+        # (an edited node is treated as not-done so it re-runs).
+        if config.run.resume:
+            for node in self.graph.nodes():
+                if self.state.is_done(node.id, self._fingerprint(node)):
+                    answer = self.state.answer_for(node.id) or ""
+                    turn = self.session.start_turn(node.id, node.prompt)
+                    self.session.complete_turn(turn, answer)
+                    self.board.set(node.id, DONE, "restored from a previous run")
+
+    @staticmethod
+    def _fingerprint(node: Node) -> str:
+        """Identity of a node's *work*; changes when the task changes."""
+        basis = "\x00".join(
+            [node.prompt, node.done_when or "", *sorted(node.depends_on)]
+        )
+        return hashlib.sha1(basis.encode("utf-8")).hexdigest()
 
     # ------------------------------------------------------------------- run
     def run(self) -> None:
@@ -76,8 +88,13 @@ class Supervisor:
 
         try:
             for idx, node in enumerate(order, start=1):
-                if self.state.is_done(node.id):
-                    log.info("[%d/%d] %s — already done, skipping.", idx, total, node.id)
+                fp = self._fingerprint(node)
+                if self.config.run.resume and self.state.is_done(node.id, fp):
+                    log.info(
+                        "[%d/%d] %s — skipping (cached from a previous run; "
+                        "use --reset to redo or --no-resume to ignore the cache).",
+                        idx, total, node.id,
+                    )
                     continue
                 log.info("[%d/%d] %s — starting.", idx, total, node.id)
                 self.board.set(node.id, RUNNING)
@@ -86,7 +103,7 @@ class Supervisor:
                 except TaskFailed as exc:
                     self.board.set(node.id, FAILED, str(exc))
                     raise
-                self.state.mark_done(node.id, answer)
+                self.state.mark_done(node.id, answer, fp)
                 self.board.set(node.id, DONE)
                 log.info("[%d/%d] %s — done.", idx, total, node.id)
                 if idx < total:

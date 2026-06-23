@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 from .config import load_config
@@ -37,6 +38,11 @@ def main(argv=None) -> int:
         help="Delete the saved progress file before running.",
     )
     parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Ignore saved progress and re-run every node (don't skip cached ones).",
+    )
+    parser.add_argument(
         "--list-spaces",
         action="store_true",
         help="List the spaces/DMs your auth can see (to find a DM's API id), then exit.",
@@ -46,6 +52,12 @@ def main(argv=None) -> int:
         metavar="TEXT",
         help="Post one message to the configured space and print the reply, then "
         "exit. Quick connectivity test (needs only the chat.messages scope).",
+    )
+    parser.add_argument(
+        "--edit",
+        action="store_true",
+        help="Open the browser graph EDITOR (create/connect/save nodes) instead "
+        "of running. Serves the dashboard in editor mode and writes the graph file.",
     )
     parser.add_argument(
         "--dashboard",
@@ -69,10 +81,15 @@ def main(argv=None) -> int:
         config.graph_file = args.graph
     if args.transport:
         config.chat.transport = args.transport
+    if args.no_resume:
+        config.run.resume = False
     if args.dashboard:
         config.dashboard.enabled = True
     if args.dashboard_port is not None:
         config.dashboard.port = args.dashboard_port
+
+    if args.edit:
+        return _edit(config)
 
     if args.list_spaces:
         return _list_spaces(config)
@@ -111,6 +128,26 @@ def _list_spaces(config) -> int:
         label = display or ("(direct message)" if "DIRECT" in stype else "")
         print(f"{name:<28}  {stype:<16}  {label}")
     print("\nUse the API NAME (e.g. spaces/AAAA…) as KGS__CHAT__GOOGLE__SPACE.")
+    return 0
+
+
+def _edit(config) -> int:
+    from .dashboard import Dashboard
+    from .editor import GraphStore
+
+    store = GraphStore(config.graph_file)
+    dash = Dashboard(store, config.dashboard.host, config.dashboard.port)
+    dash.start()
+    print(f"\nGraph editor: {dash.url}")
+    print(f"'Save to file' writes to: {config.graph_file}")
+    print("Build/edit nodes in the browser. Press Ctrl-C to stop.\n")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nEditor stopped.")
+    finally:
+        dash.stop()
     return 0
 
 

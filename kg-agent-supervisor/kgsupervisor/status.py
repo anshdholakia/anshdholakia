@@ -79,4 +79,5 @@ class StatusBoard:
                 "total": len(self._meta),
                 "elapsed": time.time() - self._started,
                 "events": list(reversed(self._events)),  # newest first
+                "editable": False,
             }

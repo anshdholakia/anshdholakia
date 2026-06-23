@@ -42,7 +42,6 @@ class GoogleChatClient(ChatClient):
     def __init__(self, config):
         try:
             import requests
-            from google.oauth2 import service_account
             from google.auth.transport.requests import AuthorizedSession
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError(
@@ -58,9 +57,7 @@ class GoogleChatClient(ChatClient):
                 f"Got {self.space!r}."
             )
 
-        creds = service_account.Credentials.from_service_account_file(
-            g.credentials_file, scopes=SCOPES
-        )
+        creds = self._build_credentials(g)
         self._service_account_email = creds.service_account_email
         self._session = AuthorizedSession(creds)
 
@@ -75,6 +72,35 @@ class GoogleChatClient(ChatClient):
         self._own_messages: Set[str] = set()
         # Only consider messages created after this moment.
         self._last_seen = time.time()
+
+    @staticmethod
+    def _build_credentials(g):
+        """Get credentials for the Chat app, key-file or impersonation based."""
+        if g.credentials_file:
+            from google.oauth2 import service_account
+
+            return service_account.Credentials.from_service_account_file(
+                g.credentials_file, scopes=SCOPES
+            )
+        if g.impersonate_service_account:
+            # Key-free: use your own ADC (gcloud auth application-default login)
+            # to mint short-lived tokens for the target service account. Requires
+            # the "Service Account Token Creator" role on that SA.
+            from google.auth import default as adc_default
+            from google.auth import impersonated_credentials
+
+            source, _ = adc_default()
+            return impersonated_credentials.Credentials(
+                source_credentials=source,
+                target_principal=g.impersonate_service_account,
+                target_scopes=SCOPES,
+            )
+        raise ValueError(
+            "Set chat.google.credentials_file (JSON key) OR "
+            "chat.google.impersonate_service_account (key-free, recommended when "
+            "your org blocks SA key creation). For impersonation, first run:\n"
+            "    gcloud auth application-default login"
+        )
 
     # ------------------------------------------------------------------ post
     def post(self, text: str, thread_key: Optional[str] = None) -> None:

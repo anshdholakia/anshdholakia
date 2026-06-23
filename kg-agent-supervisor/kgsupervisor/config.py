@@ -32,7 +32,11 @@ class WebhookConfig:
 @dataclass
 class GoogleConfig:
     space: Optional[str] = None              # "spaces/AAAA…"
-    credentials_file: Optional[str] = None   # service-account JSON key
+    credentials_file: Optional[str] = None   # service-account JSON key (if allowed)
+    # Key-free auth for orgs that block SA key creation: authenticate as yourself
+    # (gcloud auth application-default login) and impersonate this service
+    # account. You need the "Service Account Token Creator" role on it.
+    impersonate_service_account: Optional[str] = None   # the SA email to impersonate
     # Hybrid posting: if set, prompts are POSTed via this incoming-webhook URL
     # while replies are still READ via the API. Leave null to post via the API.
     webhook_url: Optional[str] = None

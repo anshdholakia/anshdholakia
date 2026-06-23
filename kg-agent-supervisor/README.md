@@ -148,6 +148,22 @@ once the edits settle (or a final marker appears) — see below.
 > The client filters out its own posts and (with `bot_name` set) only treats
 > your agent's messages as replies.
 
+**Key-free auth (org blocks SA keys).** Many orgs enforce a policy that blocks
+downloading service-account JSON keys
+(`iam.disableServiceAccountKeyCreation`). In that case, don't create a key —
+**impersonate** the service account using your own identity:
+
+```bash
+gcloud auth application-default login        # once per machine
+# you need the "Service Account Token Creator" role on the orchestrator SA
+export KGS__CHAT__GOOGLE__IMPERSONATE_SERVICE_ACCOUNT="kgs-orchestrator@<project>.iam.gserviceaccount.com"
+export KGS__CHAT__GOOGLE__SPACE="spaces/AAAA..."
+python3 -m kgsupervisor --config config.hulk.yaml
+```
+
+The supervisor mints short-lived tokens for the SA on the fly — no key file ever
+exists. (Set `credentials_file` instead only if your org *does* allow keys.)
+
 **Keep using your webhook to post (hybrid).** If you'd rather post through the
 incoming webhook you already created but still read replies via the API, set
 `chat.google.webhook_url` (or `KGS__CHAT__GOOGLE__WEBHOOK_URL`). Set `bot_name`
